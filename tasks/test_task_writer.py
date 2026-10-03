@@ -50,7 +50,89 @@ def load_bmdb_reader():
     return sys.modules['toolkit.tasks.bmdb_reader']
 
 
+def load_importer(bpy):
+    sys.modules['bpy'] = bpy
+    toolkit = types.ModuleType('toolkit')
+    toolkit.__path__ = [str(ROOT)]
+    tasks = types.ModuleType('toolkit.tasks')
+    tasks.__path__ = [str(ROOT / 'tasks')]
+    sys.modules['toolkit'] = toolkit
+    sys.modules['toolkit.tasks'] = tasks
+    for name in ('recurlayercollection', 'task_writer', 'unit_groups'):
+        module = types.ModuleType('toolkit.tasks.' + name)
+        sys.modules[module.__name__] = module
+    sys.modules['toolkit.tasks.task_writer'].unitTaskAppend = lambda *args: None
+    sys.modules['toolkit.tasks.task_writer'].unitTaskRun = lambda *args: None
+    sys.modules['toolkit.tasks.task_writer'].engineTaskAppend = lambda *args: None
+    sys.modules['toolkit.tasks.task_writer'].engineTaskRun = lambda *args: None
+    sys.modules['toolkit.tasks.task_writer'].usesTextModelSource = lambda: False
+    sys.modules['toolkit.tasks.unit_groups'].tagGroup = lambda *args: None
+    directories = types.ModuleType('toolkit.directories')
+    directories.withTrailingSep = lambda path: path
+    sys.modules['toolkit.directories'] = directories
+    spec = importlib.util.spec_from_file_location('toolkit.tasks.importer', ROOT / 'tasks' / 'importer.py')
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 class DirectMeshTaskTests(unittest.TestCase):
+    def test_preview_atlas_loads_udim_pattern(self):
+        class ImageCopy:
+            filepath_raw = ''
+
+            def save(self):
+                Path(self.filepath_raw).write_bytes(b'png')
+
+        class SourceImage:
+            def __init__(self, path, name):
+                self.filepath = str(path)
+                self.name = name
+                self.colorspace_settings = types.SimpleNamespace(name='sRGB')
+
+            def copy(self):
+                return ImageCopy()
+
+        class AtlasImage:
+            def __init__(self):
+                self.name = ''
+                self.colorspace_settings = types.SimpleNamespace(name='')
+                self.use_fake_user = False
+
+        class Images:
+            def __init__(self):
+                self.loaded = []
+
+            def get(self, name):
+                return None
+
+            def load(self, path, check_existing=False):
+                self.loaded.append((path, check_existing))
+                return AtlasImage()
+
+            def remove(self, image):
+                pass
+
+        with tempfile.TemporaryDirectory() as temporary:
+            texture_dir = Path(temporary)
+            images = Images()
+            bpy = types.ModuleType('bpy')
+            bpy.path = types.SimpleNamespace(abspath=lambda path: path)
+            bpy.data = types.SimpleNamespace(images=images)
+            importer = load_importer(bpy)
+
+            atlas = importer.previewAtlasImage(
+                SourceImage(texture_dir / 'main.dds', 'main.dds'),
+                SourceImage(texture_dir / 'attachment.dds', 'attachment.dds'),
+                'Diffuse')
+
+            self.assertIsNotNone(atlas)
+            self.assertIn('<UDIM>', images.loaded[0][0])
+            preview_dir = texture_dir / '.m2t_uv_previews'
+            self.assertEqual(len(list(preview_dir.glob('*.1001.png'))), 1)
+            self.assertEqual(len(list(preview_dir.glob('*.1002.png'))), 1)
+
     def test_dmb_parser_keeps_texture_source_paths(self):
         reader = load_bmdb_reader()
         database = reader.parseDescrModelBattle([

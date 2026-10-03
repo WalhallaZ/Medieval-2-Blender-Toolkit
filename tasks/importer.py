@@ -595,13 +595,12 @@ def previewAtlasImage(main_image, attachment_image, label, non_color=False):
         if not attachment_path.exists():
             savePreviewTile(attachment_image, attachment_path)
 
-        # Loading real <UDIM>-named files makes Blender create usable tile buffers.
-        # Creating tiles through the RNA API only produced empty buffers in 5.2.
-        atlas = bpy.data.images.load(str(main_path), check_existing=False)
+        # UDIM discovery happens while Blender LOADS a filename containing the
+        # token. Loading the concrete 1001 file and changing ``source`` or
+        # ``filepath`` afterwards leaves us with a one-tile image.
+        udim_path = preview_dir / (stem + '.<UDIM>.png')
+        atlas = bpy.data.images.load(str(udim_path), check_existing=False)
         atlas.name = name
-        atlas.source = 'TILED'
-        atlas.filepath = str(preview_dir / (stem + '.<UDIM>.png'))
-        atlas.reload()
     except (OSError, RuntimeError) as error:
         print("Cannot build M2T UV preview %s: %s" % (name, error))
         return None

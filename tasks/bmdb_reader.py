@@ -1,75 +1,97 @@
+"""Read model information from ``descr_model_battle.txt``.
+
+The importer only needs a model's first mesh and its main/attachment texture
+variants. Older versions reconstructed that information from the binary
+``battle_models.modeldb`` archive. Mods which ship the text description file
+instead can now be read directly.
+"""
+
+import json
 import os
 import re
-import json
 from pathlib import Path
+
 from .text_io import readModLines
 
-def bmdbReader(mod_folder):
-    # read bmdb into list and clear unnecessary info.
-    try:
-        lines = readModLines(os.path.join(mod_folder, 'unit_models', 'battle_models.modeldb'), 'utf-8')
-        bmdb_text = ' '.join(''.join(lines).splitlines())
-        bmdb_text = bmdb_text.lower().strip()
-    except FileNotFoundError as error:
-        return('No battle_models.modeldb found in the specified directory.\n%s' % error)
 
-    holder_list = []
-    for line in bmdb_text.splitlines():
-        segmented = line.split()
-        cleared = []
-        for seg in segmented:
-            if seg == 'serialization::archive' or seg == 'blank':
-                continue
-            try:
-                float(seg)
-            except ValueError:
-                cleared.append(seg)
-        holder_list.append(' '.join(cleared))
-    bmdb_text = holder_list[0]
-    bmdb_text = bmdb_text.replace("unit_models/", "\nunit_models/").replace(".mesh ", ".mesh\n").replace(".texture", ".texture\n")
+DESCR_MODEL_BATTLE = 'descr_model_battle.txt'
 
-    bmdb_cleaned = []
-    for line in bmdb_text.splitlines():
-        line = line.strip()
-        if len(line) > 0:
-            bmdb_cleaned.append(line)
 
-    model_id = 'Empty'
-    model_path = ''
-    model_mesh = ''
-    model_textures = {}
-    model_data = {'Mesh': '', 'Folder': model_path, 'Textures': model_textures}
-    model_database = {}
-    flag = 0
-    for entry in bmdb_cleaned:
-        if  flag == 0 and '.mesh' in entry:
-            model_data = {'Mesh': model_mesh, 'Folder': model_path, 'Textures': model_textures}
-            if model_id in model_database:
-                model_database[model_id+"___duplicate"] = model_data
-            else:
-                model_database[model_id] = model_data
-            model_textures = {}
-            model_id = previous_line
-            model_path = '/'.join(entry.split("/")[:-1])
-            model_mesh = entry.split("/")[-1].replace(".mesh", ".glb")
-            flag = 1
-        elif '.texture' in entry:
-            faction_id = previous_line
-            model_textures.setdefault(faction_id, [])
-            model_textures[faction_id].append(re.sub(r".*/|\.texture.*", "", entry)+".dds")
-            flag = 0
-        # If none of the above keywords, store the model or faction ID
+def _texture_name(path):
+    """Turn a game ``.texture`` path into IWTE's extracted ``.dds`` name."""
+    base_name = path.replace('\\', '/').rsplit('/', 1)[-1]
+    return re.sub(r'\.texture$', '.dds', base_name, flags=re.IGNORECASE)
+
+
+def parseDescrModelBattle(lines):
+    """Build the toolkit model dictionary from descr_model_battle lines.
+
+    ``texture`` records hold the two main maps (followed by an unused sprite),
+    while ``texture_attachments`` supplies the matching attachment maps. A
+    model's first mesh is its LOD0 mesh, which is the one IWTE extracts.
+    """
+    database = {}
+    current = None
+
+    def finish_current():
+        if current is None or not current['mesh']:
+            return
+        name = current['name']
+        # Keep the old reader's collision behavior in case a hand-authored DMB
+        # defines a type twice.
+        if name in database:
+            suffix = '___duplicate'
+            number = 2
+            key = name + suffix
+            while key in database:
+                key = '%s%s%d' % (name, suffix, number)
+                number += 1
         else:
-            previous_line = entry.split(' ')[-1]
-    model_data = {'Mesh': model_mesh, 'Folder': model_path, 'Textures': model_textures}
-    if model_id in model_database:
-        model_database[model_id+"___duplicate"] = model_data
-    else:
-        model_database[model_id] = model_data
-    del model_database['Empty']
+            key = name
+        mesh_path = current['mesh']
+        database[key] = {
+            'Mesh': re.sub(r'\.mesh$', '.glb', mesh_path.rsplit('/', 1)[-1], flags=re.IGNORECASE),
+            'Folder': mesh_path.rsplit('/', 1)[0] if '/' in mesh_path else '',
+            'Textures': current['textures'],
+        }
 
+    for raw_line in lines:
+        # Semicolon starts a comment in Medieval II's text files. Splitting
+        # fields on commas also accepts the usual tab-aligned syntax.
+        line = raw_line.split(';', 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        keyword, values = parts
+        fields = [field.strip() for field in values.split(',')]
+        keyword = keyword.lower()
+
+        if keyword == 'type':
+            finish_current()
+            name = fields[0].lower() if fields else ''
+            current = {'name': name, 'mesh': '', 'textures': {}} if name else None
+        elif current is not None and keyword == 'mesh' and fields and not current['mesh']:
+            current['mesh'] = fields[0].replace('\\', '/')
+        elif current is not None and keyword in ('texture', 'texture_attachments') and len(fields) >= 3:
+            faction = fields[0].lower()
+            textures = current['textures'].setdefault(faction, [])
+            textures.extend([_texture_name(fields[1]), _texture_name(fields[2])])
+
+    finish_current()
+    return database
+
+
+def bmdbReader(mod_folder):
+    """Read ``descr_model_battle.txt`` into the importer's model dictionary."""
+    path = os.path.join(mod_folder, DESCR_MODEL_BATTLE)
+    try:
+        database = parseDescrModelBattle(readModLines(path, 'utf-8'))
+    except FileNotFoundError as error:
+        return 'No descr_model_battle.txt found in the specified directory.\n%s' % error
 
     parent_folder = Path(__file__).parent.parent
-    with open((os.path.join(parent_folder, 'text', 'model_dictionary.json')), 'w') as models_output:
-        json.dump(model_database, models_output, indent=2)
-    return('Finished')
+    with open(parent_folder / 'text' / 'model_dictionary.json', 'w') as models_output:
+        json.dump(database, models_output, indent=2)
+    return 'Finished'

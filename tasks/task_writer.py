@@ -1,6 +1,9 @@
 import os
 import bpy
 import subprocess
+import json
+import re
+from pathlib import Path
 
 from ..directories import modRoot, withTrailingSep
 from .iwte_run import NO_WINE, findIWTEExe, waitForTaskProcess, winePath, wineWrap
@@ -11,10 +14,63 @@ from .iwte_run import NO_WINE, findIWTEExe, waitForTaskProcess, winePath, wineWr
 # separator used to give "...\IWTEiwte_tasks\toolkit_bmdb_task.txt" and a
 # FileNotFoundError on every import.
 TASK_FOLDER = 'iwte_tasks'
+MODEL_DICTIONARY = Path(__file__).parent.parent / 'text' / 'model_dictionary.json'
+TEXT_MODEL_FILE = 'descr_model_battle.txt'
+BINARY_MODEL_FILE = os.path.join('unit_models', 'battle_models.modeldb')
+MODELDB_TASK = 'toolkit_bmdb_task.txt'
+DIRECT_MESH_TASK_LIST = 'toolkit_mesh_tasks_list.txt'
 
 
 def taskPath(iwte_path, task_name):
     return os.path.join(bpy.path.abspath(iwte_path), TASK_FOLDER, task_name)
+
+
+def modDataDirectory():
+    """The selected mod's data folder, normalized the same way as Blender."""
+    reader = bpy.context.scene.med2_toolkit_reader
+    selected = reader.mods_filtered if reader.mods_filtered != 'custom' else reader.directory_mod_data
+    return bpy.path.abspath(selected)
+
+
+def usesTextModelSource():
+    """Whether meshes must be read from descr_model_battle rather than BMDB."""
+    data_dir = modDataDirectory()
+    return (os.path.isfile(os.path.join(data_dir, TEXT_MODEL_FILE)) and
+            not os.path.isfile(os.path.join(data_dir, BINARY_MODEL_FILE)))
+
+
+def _directMeshTaskName(model_name):
+    safe_name = re.sub(r'[^A-Za-z0-9_.-]+', '_', model_name)
+    return 'toolkit_mesh_%s_task.txt' % safe_name
+
+
+def _modelInfo(model_name):
+    with open(MODEL_DICTIONARY, 'r') as model_input:
+        return json.load(model_input)[model_name]
+
+
+def _writeDirectMeshTask(model_name):
+    """Write one IWTE mesh_to_extract task from the text model dictionary."""
+    model = _modelInfo(model_name)
+    data_dir = modDataDirectory()
+    mesh_name = model['Mesh'].replace('.glb', '.mesh')
+    mesh_path = os.path.join(data_dir, model['Folder'], mesh_name)
+    double_texture = any(len(textures) == 4 for textures in model['Textures'].values())
+    task_name = _directMeshTaskName(model_name)
+    task_file = taskPath(bpy.context.scene.med2_toolkit_reader.directory_iwte, task_name)
+    with open(task_file, 'w') as task_file_output:
+        task_file_output.writelines([
+            '<task_id>                                  mesh_to_extract\n',
+            '<mesh_file_full_path_in>                   "'+winePath(mesh_path)+'"\n',
+            '<mesh_type>                                unit\n',
+            '<mesh_double_texture>                      '+('yes' if double_texture else 'no')+'\n',
+            '<cas_file_types_in_list>\n',
+            '<directory_out>                            "'+winePath(withTrailingSep(bpy.context.scene.med2_toolkit_reader.directory_models))+'"\n',
+            '<extract_file_name_out>                    '+model['Mesh']+'\n',
+            '<create_text_file>                         no\n',
+            '<create_task_file_from_input>              no\n',
+        ])
+    return task_name
 
 
 def modDirectory():
@@ -74,12 +130,19 @@ def appendToTask(iwte_path, task_name, entry):
 #########################
 
 def unitTaskWriter():
+    iwte_path = bpy.context.scene.med2_toolkit_reader.directory_iwte
+    if usesTextModelSource():
+        with open(taskPath(iwte_path, DIRECT_MESH_TASK_LIST), 'w') as task_file:
+            task_file.writelines([
+                '<task_id>                                  multi_list\n',
+                '<task_list>\n',
+            ])
+        return
     vanilla_path = winePath(withTrailingSep(bpy.context.scene.med2_toolkit_reader.directory_med2))
     mod_path = winePath(modDirectory())
-    iwte_path = bpy.context.scene.med2_toolkit_reader.directory_iwte
     output_path = winePath(withTrailingSep(bpy.context.scene.med2_toolkit_reader.directory_models))
     primary_secondary = bpy.context.scene.med2_toolkit_units.primary_secondary
-    with open(taskPath(iwte_path, 'toolkit_bmdb_task.txt'), 'w') as task_file:
+    with open(taskPath(iwte_path, MODELDB_TASK), 'w') as task_file:
         task_file.writelines([
             '<task_id>                                  modeldb_mesh_to_extract''\n'
             '<mod_directory_in>                         "'+mod_path+'"\n'
@@ -92,10 +155,16 @@ def unitTaskWriter():
             ])
 
 def unitTaskAppend(unit):
-    appendToTask(bpy.context.scene.med2_toolkit_reader.directory_iwte, 'toolkit_bmdb_task.txt', unit)
+    iwte_path = bpy.context.scene.med2_toolkit_reader.directory_iwte
+    if usesTextModelSource():
+        task_name = _writeDirectMeshTask(unit)
+        appendToTask(iwte_path, DIRECT_MESH_TASK_LIST, '"'+winePath(taskPath(iwte_path, task_name))+'"')
+        return
+    appendToTask(iwte_path, MODELDB_TASK, unit)
 
 def unitTaskRun():
-    return runTask(bpy.context.scene.med2_toolkit_reader.directory_iwte, 'toolkit_bmdb_task.txt')
+    task_name = DIRECT_MESH_TASK_LIST if usesTextModelSource() else MODELDB_TASK
+    return runTask(bpy.context.scene.med2_toolkit_reader.directory_iwte, task_name)
 
 #########################
 ######## Engines ########

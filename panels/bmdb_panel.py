@@ -210,7 +210,7 @@ class MED_2_TOOLKIT_BMDB_data(bpy.types.PropertyGroup):
     # The model_dictionary.json mtime the list was last built from, saved with
     # the file so a .blend that was left on an older mod read rebuilds itself
     # when it is opened. See bmdbListIsCurrent.
-    built_from: StringProperty(name = "Built from", description = "Which read of battle_models.modeldb this list came from", default = "", options = {'HIDDEN'})
+    built_from: StringProperty(name = "Built from", description = "Which read of descr_model_battle.txt this list came from", default = "", options = {'HIDDEN'})
     # TEXTEDIT_UPDATE applies the value on every keystroke instead of waiting
     # for Return, which is what makes the list narrow as you type
     search: StringProperty(name = "Search", description = "Show only models whose name contains what you type. Several words all have to match, in any order, so \"eng knight\" finds ug_english_knight", default = "", options = {'TEXTEDIT_UPDATE'}, update = snapToSearch)

@@ -1,6 +1,7 @@
 import bpy
 import json
 import random
+from array import array
 from pathlib import Path
 from . import recurlayercollection
 from ..directories import withTrailingSep
@@ -452,10 +453,13 @@ def modelImporter(model_folder, unit_name, faction_id, model_info, model_id):
         textures = model_info['Textures'][faction_id]
     except KeyError:
         textures = list(model_info['Textures'].values())[0]
+    attachment_textures = None
     if len(textures) == 4:
         attachment_textures = textures[2:]
     main_textures = textures[:2]
     texture_folder = model_folder+('textures/')
+    preview_diffuse, preview_normal = previewTextureAtlases(
+        texture_folder, main_textures, attachment_textures)
     bpy.ops.object.select_all(action='DESELECT')
     obj_armature.select_set(True)
     for parent_object in bpy.context.selected_objects:
@@ -463,10 +467,13 @@ def modelImporter(model_folder, unit_name, faction_id, model_info, model_id):
             material = obj.data.materials[0]
             if any(x in material.name for x in ['__main', '__single']) and checkExistingMaterials(material, main_textures[0]) == False:
                 material.name = main_textures[0]
-                materialWorkflow(texture_folder, main_textures[0], main_textures[1], material)
-            elif '__attach' in material.name and checkExistingMaterials(material, attachment_textures[0])  == False:
+                materialWorkflow(texture_folder, main_textures[0], main_textures[1], material,
+                                 preview_diffuse, preview_normal)
+            elif (attachment_textures and '__attach' in material.name
+                  and checkExistingMaterials(material, attachment_textures[0]) == False):
                 material.name = attachment_textures[0]
-                materialWorkflow(texture_folder, attachment_textures[0], attachment_textures[1], material)
+                materialWorkflow(texture_folder, attachment_textures[0], attachment_textures[1], material,
+                                 preview_diffuse, preview_normal)
     bpy.ops.object.select_all(action='DESELECT')
     obj_armature.select_set(True)
     if bpy.context.scene.med2_toolkit_units.hide_toggle:
@@ -541,7 +548,65 @@ def principledNode(material):
     node_tree.links.new(output_node.inputs[0], shader_node.outputs[0])
     return shader_node
 
-def materialWorkflow(texture_path, texture, normal_texture, material):
+
+def textureImage(texture_path, texture):
+    """Load one extracted DDS when it is present, otherwise return ``None``."""
+    filepath = Path(texture_path+texture)
+    if not filepath.exists():
+        print("No texture file found:", texture)
+        return None
+    return bpy.data.images.load(str(filepath), check_existing=True)
+
+
+def previewAtlasImage(main_image, attachment_image, label, non_color=False):
+    """A generated UDIM image for viewing game UVs as one layout.
+
+    Medieval II keeps attachment UVs in U 1..2 while the main texture occupies
+    U 0..1. The atlas is used only by imported Blender materials: it leaves the
+    mesh UVs, source DDS files and eventual game export completely unchanged.
+    """
+    if main_image is None or attachment_image is None:
+        return None
+    width, height = main_image.size
+    name = 'M2T UV Preview %s: %s + %s' % (label, main_image.name, attachment_image.name)
+    atlas = bpy.data.images.get(name)
+    if atlas is None:
+        atlas = bpy.data.images.new(name, width, height, alpha=True, tiled=True)
+    if atlas.source != 'TILED':
+        print("Cannot reuse M2T UV preview image %s because it is not tiled." % name)
+        return None
+    if atlas.tiles.get(1002) is None:
+        atlas.tiles.new(1002, label='Attachment')
+
+    for tile_number, source, tile_label in ((1001, main_image, 'Main'),
+                                            (1002, attachment_image, 'Attachment')):
+        tile_index = next(index for index, tile in enumerate(atlas.tiles)
+                          if tile.number == tile_number)
+        atlas.tiles.active_index = tile_index
+        atlas.tiles[tile_index].label = tile_label
+        atlas.scale(source.size[0], source.size[1], tile_index=tile_index)
+        pixels = array('f', [0.0]) * (source.size[0] * source.size[1] * 4)
+        source.pixels.foreach_get(pixels)
+        atlas.pixels.foreach_set(pixels)
+    atlas.colorspace_settings.name = 'Non-Color' if non_color else main_image.colorspace_settings.name
+    atlas.update()
+    return atlas
+
+
+def previewTextureAtlases(texture_path, main_textures, attachment_textures):
+    """Return diffuse/normal preview atlases, or ``(None, None)`` for singles."""
+    if attachment_textures is None:
+        return None, None
+    main_diffuse = textureImage(texture_path, main_textures[0])
+    attachment_diffuse = textureImage(texture_path, attachment_textures[0])
+    main_normal = textureImage(texture_path, main_textures[1])
+    attachment_normal = textureImage(texture_path, attachment_textures[1])
+    return (previewAtlasImage(main_diffuse, attachment_diffuse, 'Diffuse'),
+            previewAtlasImage(main_normal, attachment_normal, 'Normal', non_color=True))
+
+
+def materialWorkflow(texture_path, texture, normal_texture, material,
+                     preview_diffuse=None, preview_normal=None):
     #Setup material mode and keywords
     material.use_nodes = True
     material.blend_method = 'CLIP'
@@ -558,12 +623,11 @@ def materialWorkflow(texture_path, texture, normal_texture, material):
     texture_image.name = 'Diffuse Texture'
     texture_image.location = (-506, 444)
     #Check if texture file doesn't exist
-    file_check = Path(texture_path+texture)
-    if not file_check.exists():
-        print("No texture file found;", texture)
+    if preview_diffuse is not None:
+        texture_image.image = preview_diffuse
     else:
-        print("Image found")
-        texture_image.image = bpy.data.images.load(texture_path+texture)
+        texture_image.image = textureImage(texture_path, texture)
+    if texture_image.image is not None:
         #Linking nodes: colour -> shader; alpha -> shader
         new_link(shader_node.inputs[0], texture_image.outputs[0])
         new_link(shader_node.inputs[4], texture_image.outputs[1])
@@ -586,11 +650,11 @@ def materialWorkflow(texture_path, texture, normal_texture, material):
     multiply_node.inputs[1].default_value = 7.5
 
     #Check if texture file doesn't exist
-    file_check = Path(texture_path+normal_texture)
-    if not file_check.exists():
-        print("No texture file found:", normal_texture)
+    if preview_normal is not None:
+        normal_image.image = preview_normal
     else:
-        normal_image.image = bpy.data.images.load(texture_path+normal_texture)
+        normal_image.image = textureImage(texture_path, normal_texture)
+    if normal_image.image is not None:
         normal_image.image.colorspace_settings.name = 'Non-Color'
         #Linking nodes: normal -> curves -> normal map -> shader
         new_link(rgb_curve.inputs[1], normal_image.outputs[0])

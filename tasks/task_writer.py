@@ -3,6 +3,7 @@ import bpy
 import subprocess
 import json
 import re
+import hashlib
 from pathlib import Path
 
 from ..directories import modRoot, withTrailingSep
@@ -63,6 +64,12 @@ def _directMeshTaskName(model_name):
     return 'toolkit_mesh_%s_task.txt' % safe_name
 
 
+def _directTextureTaskName(texture_directory):
+    """A stable, filesystem-safe name for one source texture directory."""
+    digest = hashlib.sha1(texture_directory.encode('utf-8')).hexdigest()[:12]
+    return 'toolkit_textures_%s_task.txt' % digest
+
+
 def _modelInfo(model_name):
     with open(MODEL_DICTIONARY, 'r') as model_input:
         return json.load(model_input)[model_name]
@@ -92,6 +99,43 @@ def _writeDirectMeshTask(model_name):
     taskLog("direct mesh task: model=%s, mesh=%s, double_texture=%s, task=%s, output=%s"
             % (model_name, mesh_path, double_texture, task_file,
                bpy.context.scene.med2_toolkit_reader.directory_models))
+    return task_name
+
+
+def _textureDirectories(model, data_dir):
+    """Texture source directories for a DMB model, relative to its data root.
+
+    ``Textures`` deliberately only holds DDS basenames for Blender material
+    assignment. ``TexturePaths`` retains the DMB paths so IWTE can turn the
+    matching game .texture files into those DDS files. Older dictionaries do
+    not have it, so importing their already-converted output stays possible.
+    """
+    directories = []
+    for paths in model.get('TexturePaths', {}).values():
+        for texture_path in paths:
+            directory = os.path.dirname(texture_path.replace('/', os.sep).replace('\\', os.sep))
+            source_directory = os.path.normpath(os.path.join(data_dir, directory))
+            if source_directory not in directories:
+                directories.append(source_directory)
+    return directories
+
+
+def _writeDirectTextureTask(texture_directory):
+    """Write an IWTE task that converts one DMB texture folder to DDS files."""
+    reader = bpy.context.scene.med2_toolkit_reader
+    texture_output = os.path.join(bpy.path.abspath(reader.directory_models), 'textures')
+    os.makedirs(texture_output, exist_ok=True)
+    task_name = _directTextureTaskName(texture_directory)
+    task_file = taskPath(reader.directory_iwte, task_name)
+    with open(task_file, 'w') as task_file_output:
+        task_file_output.writelines([
+            '<task_id>                                  texture_to_dds_directory\n',
+            '<directory_in>                             "'+winePath(texture_directory)+'"\n',
+            '<directory_out>                            "'+winePath(texture_output)+'"\n',
+            '<directory_out_increment>                  no\n',
+        ])
+    taskLog("direct texture task: source=%s, output=%s, task=%s"
+            % (texture_directory, texture_output, task_file))
     return task_name
 
 
@@ -185,6 +229,11 @@ def unitTaskWriter():
 def unitTaskAppend(unit):
     iwte_path = bpy.context.scene.med2_toolkit_reader.directory_iwte
     if usesTextModelSource():
+        model = _modelInfo(unit)
+        for texture_directory in _textureDirectories(model, modDataDirectory()):
+            texture_task = _writeDirectTextureTask(texture_directory)
+            appendToTask(iwte_path, DIRECT_MESH_TASK_LIST,
+                         '"'+winePath(taskPath(iwte_path, texture_task))+'"')
         task_name = _writeDirectMeshTask(unit)
         appendToTask(iwte_path, DIRECT_MESH_TASK_LIST, '"'+winePath(taskPath(iwte_path, task_name))+'"')
         taskLog("queued direct mesh task for model=%s" % unit)

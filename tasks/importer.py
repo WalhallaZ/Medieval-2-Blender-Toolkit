@@ -4,7 +4,8 @@ import random
 from pathlib import Path
 from . import recurlayercollection
 from ..directories import withTrailingSep
-from .task_writer import unitTaskAppend, unitTaskRun, engineTaskAppend, engineTaskRun
+from .task_writer import (unitTaskAppend, unitTaskRun, engineTaskAppend,
+                          engineTaskRun, usesTextModelSource)
 from .unit_groups import tagGroup
 script_folder = Path(__file__).parent.parent
 
@@ -140,10 +141,25 @@ def fileChecker(model_folder, model_list, defer=False):
     with open(script_folder/('text/model_dictionary.json'), 'r') as bmdb_input:
         bmdb_dictionary = json.load(bmdb_input)
     missing = []
+    direct_mesh_source = usesTextModelSource()
     for model_id in model_list:
-        model_mesh = bmdb_dictionary[model_id]['Mesh']
-        if not Path(str(model_folder)+model_mesh).exists():
-            print("Model '%s' not found in folder %s." % (model_mesh, str(model_folder)))
+        model_info = bmdb_dictionary[model_id]
+        model_mesh = model_info['Mesh']
+        missing_mesh = not Path(str(model_folder)+model_mesh).exists()
+        # A pre-fix DMB conversion may already have produced a GLB but no DDS
+        # files. Treat that as incomplete so the next import runs the new
+        # texture_to_dds tasks instead of preserving a blank material forever.
+        texture_names = [name for textures in model_info.get('Textures', {}).values()
+                         for name in textures]
+        missing_textures = direct_mesh_source and any(
+            not Path(str(model_folder) + 'textures/' + name).exists()
+            for name in texture_names)
+        if missing_mesh or missing_textures:
+            if missing_mesh:
+                print("Model '%s' not found in folder %s." % (model_mesh, str(model_folder)))
+            else:
+                print("Textures for model '%s' not found in folder %s." %
+                      (model_id, str(model_folder)+'textures/'))
             print("Appending to the task file")
             unitTaskAppend(model_id)
             missing.append(model_id)

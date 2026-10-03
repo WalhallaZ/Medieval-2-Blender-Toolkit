@@ -23,6 +23,11 @@ def _texture_name(path):
     return re.sub(r'\.texture$', '.dds', base_name, flags=re.IGNORECASE)
 
 
+def _texture_path(path):
+    """Normalize a DMB texture path without losing its source directory."""
+    return path.replace('\\', '/')
+
+
 def parseDescrModelBattle(lines):
     """Build the toolkit model dictionary from descr_model_battle lines.
 
@@ -53,6 +58,9 @@ def parseDescrModelBattle(lines):
             'Mesh': re.sub(r'\.mesh$', '.glb', mesh_path.rsplit('/', 1)[-1], flags=re.IGNORECASE),
             'Folder': mesh_path.rsplit('/', 1)[0] if '/' in mesh_path else '',
             'Textures': current['textures'],
+            # The importer uses bare DDS names, but direct mesh extraction also
+            # needs the directories that hold the original .texture files.
+            'TexturePaths': current['texture_paths'],
         }
 
     for raw_line in lines:
@@ -71,13 +79,15 @@ def parseDescrModelBattle(lines):
         if keyword == 'type':
             finish_current()
             name = fields[0].lower() if fields else ''
-            current = {'name': name, 'mesh': '', 'textures': {}} if name else None
+            current = {'name': name, 'mesh': '', 'textures': {}, 'texture_paths': {}} if name else None
         elif current is not None and keyword == 'mesh' and fields and not current['mesh']:
             current['mesh'] = fields[0].replace('\\', '/')
         elif current is not None and keyword in ('texture', 'texture_attachments') and len(fields) >= 3:
             faction = fields[0].lower()
             textures = current['textures'].setdefault(faction, [])
+            texture_paths = current['texture_paths'].setdefault(faction, [])
             textures.extend([_texture_name(fields[1]), _texture_name(fields[2])])
+            texture_paths.extend([_texture_path(fields[1]), _texture_path(fields[2])])
 
     finish_current()
     return database

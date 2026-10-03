@@ -606,6 +606,9 @@ def previewAtlasImage(main_image, attachment_image, label, non_color=False):
         print("Cannot build M2T UV preview %s: %s" % (name, error))
         return None
     atlas.colorspace_settings.name = 'Non-Color' if non_color else main_image.colorspace_settings.name
+    # modelImporter clears unused datablocks after import. The preview belongs
+    # in the UV editor rather than a material slot, so retain it explicitly.
+    atlas.use_fake_user = True
     return atlas
 
 

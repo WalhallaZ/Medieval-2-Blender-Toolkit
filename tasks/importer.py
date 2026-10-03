@@ -583,11 +583,23 @@ def previewAtlasImage(main_image, attachment_image, label, non_color=False):
         tile_index = next(index for index, tile in enumerate(atlas.tiles)
                           if tile.number == tile_number)
         atlas.tiles.active_index = tile_index
-        atlas.tiles[tile_index].label = tile_label
-        atlas.scale(source.size[0], source.size[1], tile_index=tile_index)
+        tile = atlas.tiles[tile_index]
+        tile.label = tile_label
+        # UDIMTiles.new() only adds tile metadata.  Unlike Image > Add Tile in
+        # Blender's UI it has no pixels to scale or write until it is made a
+        # generated tile explicitly.
+        tile.generated_width = source.size[0]
+        tile.generated_height = source.size[1]
+        tile.generated_type = 'BLANK'
+        tile.generated_color = (0.0, 0.0, 0.0, 0.0)
+        atlas.update()
         pixels = array('f', [0.0]) * (source.size[0] * source.size[1] * 4)
-        source.pixels.foreach_get(pixels)
-        atlas.pixels.foreach_set(pixels)
+        try:
+            source.pixels.foreach_get(pixels)
+            atlas.pixels.foreach_set(pixels)
+        except RuntimeError as error:
+            print("Cannot build M2T UV preview %s: %s" % (name, error))
+            return None
     atlas.colorspace_settings.name = 'Non-Color' if non_color else main_image.colorspace_settings.name
     atlas.update()
     return atlas

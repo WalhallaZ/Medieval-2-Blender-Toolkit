@@ -67,6 +67,9 @@ class DirectMeshTaskTests(unittest.TestCase):
             self.assertIn('<mesh_double_texture>                      yes', task)
             self.assertIn('<extract_file_name_out>                    redari_lod0.glb', task)
             self.assertIn('toolkit_mesh_redari_tjarlai_task.txt', task_list)
+            log = (output / writer.IMPORT_LOG_NAME).read_text()
+            self.assertIn('direct_mesh=True', log)
+            self.assertIn('queued direct mesh task for model=redari_tjarlai', log)
 
 
 if __name__ == '__main__':

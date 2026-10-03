@@ -19,10 +19,25 @@ TEXT_MODEL_FILE = 'descr_model_battle.txt'
 BINARY_MODEL_FILE = os.path.join('unit_models', 'battle_models.modeldb')
 MODELDB_TASK = 'toolkit_bmdb_task.txt'
 DIRECT_MESH_TASK_LIST = 'toolkit_mesh_tasks_list.txt'
+IMPORT_LOG_NAME = 'medieval2_toolkit_import.log'
 
 
 def taskPath(iwte_path, task_name):
     return os.path.join(bpy.path.abspath(iwte_path), TASK_FOLDER, task_name)
+
+
+def taskLog(message):
+    """Print and persist enough conversion context to diagnose IWTE failures."""
+    message = 'Medieval 2 Toolkit: ' + message
+    print(message)
+    try:
+        output_dir = bpy.path.abspath(bpy.context.scene.med2_toolkit_reader.directory_models)
+        with open(os.path.join(output_dir, IMPORT_LOG_NAME), 'a', encoding='utf-8') as log_file:
+            log_file.write(message + '\n')
+    except OSError:
+        # Importing must not fail merely because the selected output directory
+        # cannot yet receive a diagnostic file; Blender's console still has it.
+        pass
 
 
 def modDataDirectory():
@@ -35,8 +50,12 @@ def modDataDirectory():
 def usesTextModelSource():
     """Whether meshes must be read from descr_model_battle rather than BMDB."""
     data_dir = modDataDirectory()
-    return (os.path.isfile(os.path.join(data_dir, TEXT_MODEL_FILE)) and
-            not os.path.isfile(os.path.join(data_dir, BINARY_MODEL_FILE)))
+    text_source = os.path.isfile(os.path.join(data_dir, TEXT_MODEL_FILE))
+    binary_source = os.path.isfile(os.path.join(data_dir, BINARY_MODEL_FILE))
+    use_text = text_source and not binary_source
+    taskLog("model source: data=%s, descr_model_battle=%s, battle_models.modeldb=%s, direct_mesh=%s"
+            % (data_dir, text_source, binary_source, use_text))
+    return use_text
 
 
 def _directMeshTaskName(model_name):
@@ -70,6 +89,9 @@ def _writeDirectMeshTask(model_name):
             '<create_text_file>                         no\n',
             '<create_task_file_from_input>              no\n',
         ])
+    taskLog("direct mesh task: model=%s, mesh=%s, double_texture=%s, task=%s, output=%s"
+            % (model_name, mesh_path, double_texture, task_file,
+               bpy.context.scene.med2_toolkit_reader.directory_models))
     return task_name
 
 
@@ -108,13 +130,17 @@ def startTask(iwte_path, task_name):
     command = wineWrap([iwte_exe, "--uh", "--st", winePath(taskPath(iwte_path, task_name))])
     if not command:
         raise FileNotFoundError(NO_WINE % "IWTE")
+    taskLog("launching IWTE task=%s, executable=%s" % (taskPath(iwte_path, task_name), iwte_exe))
     return subprocess.Popen(command, cwd = iwte_dir)
 
 
 def runTask(iwte_path, task_name):
     """startTask, waited on. Returns True if IWTE finished by itself; on False
     it is still going and the caller should say which models did not appear."""
-    return waitForTaskProcess(startTask(iwte_path, task_name), task_name)
+    process = startTask(iwte_path, task_name)
+    completed = waitForTaskProcess(process, task_name)
+    taskLog("IWTE task=%s completed=%s, exit_code=%s" % (task_name, completed, process.returncode))
+    return completed
 
 
 def appendToTask(iwte_path, task_name, entry):
@@ -137,6 +163,7 @@ def unitTaskWriter():
                 '<task_id>                                  multi_list\n',
                 '<task_list>\n',
             ])
+        taskLog("prepared direct-mesh task list: %s" % taskPath(iwte_path, DIRECT_MESH_TASK_LIST))
         return
     vanilla_path = winePath(withTrailingSep(bpy.context.scene.med2_toolkit_reader.directory_med2))
     mod_path = winePath(modDirectory())
@@ -153,17 +180,21 @@ def unitTaskWriter():
             '\n'
             '<modeldb_type_name_list>'
             ])
+    taskLog("prepared modeldb task: %s" % taskPath(iwte_path, MODELDB_TASK))
 
 def unitTaskAppend(unit):
     iwte_path = bpy.context.scene.med2_toolkit_reader.directory_iwte
     if usesTextModelSource():
         task_name = _writeDirectMeshTask(unit)
         appendToTask(iwte_path, DIRECT_MESH_TASK_LIST, '"'+winePath(taskPath(iwte_path, task_name))+'"')
+        taskLog("queued direct mesh task for model=%s" % unit)
         return
     appendToTask(iwte_path, MODELDB_TASK, unit)
+    taskLog("queued modeldb entry for model=%s" % unit)
 
 def unitTaskRun():
     task_name = DIRECT_MESH_TASK_LIST if usesTextModelSource() else MODELDB_TASK
+    taskLog("running unit conversion task=%s" % task_name)
     return runTask(bpy.context.scene.med2_toolkit_reader.directory_iwte, task_name)
 
 #########################

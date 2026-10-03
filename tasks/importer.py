@@ -2,6 +2,7 @@ import bpy
 import json
 import random
 import hashlib
+from array import array
 from pathlib import Path
 from . import recurlayercollection
 from ..directories import withTrailingSep
@@ -558,9 +559,18 @@ def textureImage(texture_path, texture):
 
 
 def savePreviewTile(source, destination):
-    """Save an image copy as a PNG without changing the source DDS datablock."""
-    copy = source.copy()
+    """Save source pixels as a PNG without changing the source DDS datablock.
+
+    ``Image.copy()`` only copies the datablock; for a file-backed DDS it has no
+    image buffer and Image.save() fails.  Create a generated buffer instead.
+    """
+    width, height = source.size
+    copy = bpy.data.images.new('M2T UV Preview Tile', width, height, alpha=True)
     try:
+        pixels = array('f', [0.0]) * (width * height * 4)
+        source.pixels.foreach_get(pixels)
+        copy.pixels.foreach_set(pixels)
+        copy.colorspace_settings.name = source.colorspace_settings.name
         copy.filepath_raw = str(destination)
         copy.file_format = 'PNG'
         copy.save()
@@ -595,12 +605,15 @@ def previewAtlasImage(main_image, attachment_image, label, non_color=False):
         if not attachment_path.exists():
             savePreviewTile(attachment_image, attachment_path)
 
-        # UDIM discovery happens while Blender LOADS a filename containing the
-        # token. Loading the concrete 1001 file and changing ``source`` or
-        # ``filepath`` afterwards leaves us with a one-tile image.
+        # bpy.data.images.load() does not detect a UDIM set from the token. A
+        # tiled image with the two real files behind it does: reload() fills
+        # both tile buffers from the <UDIM> path.
         udim_path = preview_dir / (stem + '.<UDIM>.png')
-        atlas = bpy.data.images.load(str(udim_path), check_existing=False)
-        atlas.name = name
+        atlas = bpy.data.images.new(name, main_image.size[0], main_image.size[1],
+                                    alpha=True, tiled=True)
+        atlas.tiles.new(1002, label='Attachment')
+        atlas.filepath = str(udim_path)
+        atlas.reload()
     except (OSError, RuntimeError) as error:
         print("Cannot build M2T UV preview %s: %s" % (name, error))
         return None

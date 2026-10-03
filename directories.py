@@ -86,6 +86,19 @@ DEFAULT_DIRECTORIES = {
     "directory_eop": ""
 }
 
+# directories.json is useful while the add-on is installed, but it lives under
+# the add-on itself and is replaced by a fresh test install.  Blender keeps
+# AddonPreferences in its user configuration, so mirror these path fields
+# there as the durable copy.
+PERSISTENT_DIRECTORY_KEYS = (
+    "directory_med2", "directory_iwte", "directory_mod_data",
+    "directory_models", "directory_settlements", "directory_unit_export",
+    "directory_unit_cards", "directory_strat", "directory_iwte_task_template",
+    "directory_eop",
+)
+_syncing_persistent_directories = False
+_persistent_directories_save_pending = False
+
 DEFAULT_MENU_SETTINGS = {
     "hide_toggle": False,
     "use_existing": False,
@@ -119,6 +132,66 @@ def ensureDataFiles():
             continue
         with open(file_path, 'w') as default_output:
             json.dump(default_content, default_output, indent=2)
+
+
+def _toolkitPreferences(context):
+    """The add-on preferences, if Blender has registered them yet."""
+    package = __package__.split('.', 1)[0]
+    entry = context.preferences.addons.get(package) if context else None
+    return entry.preferences if entry is not None else None
+
+
+def _savePersistentDirectories():
+    global _persistent_directories_save_pending
+    _persistent_directories_save_pending = False
+    try:
+        bpy.ops.wm.save_userpref()
+    except RuntimeError:
+        # Blender may still be starting or shutting down. The values remain in
+        # the active preferences and will be saved by Blender normally.
+        pass
+    return None
+
+
+def _schedulePersistentDirectoriesSave():
+    global _persistent_directories_save_pending
+    if not _persistent_directories_save_pending:
+        _persistent_directories_save_pending = True
+        bpy.app.timers.register(_savePersistentDirectories, first_interval=0.25)
+
+
+def persistFolderPaths(self, context):
+    """Mirror a Paths-panel edit into Blender preferences immediately."""
+    if _syncing_persistent_directories:
+        return
+    preferences = _toolkitPreferences(context)
+    reader = getattr(context.scene, 'med2_toolkit_reader', None) if context else None
+    if preferences is None or reader is None:
+        return
+    for key in PERSISTENT_DIRECTORY_KEYS:
+        setattr(preferences, key, getattr(reader, key))
+    _schedulePersistentDirectoriesSave()
+
+
+def restorePersistentFolderPaths():
+    """Restore Paths-panel values after registration, or migrate the legacy file."""
+    global _syncing_persistent_directories
+    context = bpy.context
+    preferences = _toolkitPreferences(context)
+    reader = getattr(context.scene, 'med2_toolkit_reader', None)
+    if preferences is None or reader is None:
+        return
+    _syncing_persistent_directories = True
+    try:
+        for key in PERSISTENT_DIRECTORY_KEYS:
+            saved = getattr(preferences, key, '')
+            if saved:
+                setattr(reader, key, saved)
+            else:
+                setattr(preferences, key, getattr(reader, key))
+    finally:
+        _syncing_persistent_directories = False
+    _schedulePersistentDirectoriesSave()
 
 def saveFolderPaths():
     mod_list = bpy.context.scene.med2_toolkit_reader.list_holder

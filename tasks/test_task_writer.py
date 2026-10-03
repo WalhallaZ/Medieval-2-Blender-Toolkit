@@ -81,6 +81,9 @@ class DirectMeshTaskTests(unittest.TestCase):
     def test_preview_atlas_loads_udim_pattern(self):
         class ImageCopy:
             filepath_raw = ''
+            file_format = ''
+            pixels = types.SimpleNamespace(foreach_set=lambda pixels: None)
+            colorspace_settings = types.SimpleNamespace(name='')
 
             def save(self):
                 Path(self.filepath_raw).write_bytes(b'png')
@@ -89,16 +92,21 @@ class DirectMeshTaskTests(unittest.TestCase):
             def __init__(self, path, name):
                 self.filepath = str(path)
                 self.name = name
+                self.size = (16, 16)
                 self.colorspace_settings = types.SimpleNamespace(name='sRGB')
-
-            def copy(self):
-                return ImageCopy()
+                self.pixels = types.SimpleNamespace(foreach_get=lambda pixels: None)
 
         class AtlasImage:
             def __init__(self):
                 self.name = ''
                 self.colorspace_settings = types.SimpleNamespace(name='')
                 self.use_fake_user = False
+                self.filepath = ''
+                self.reloaded = False
+                self.tiles = types.SimpleNamespace(new=lambda number, label: None)
+
+            def reload(self):
+                self.reloaded = True
 
         class Images:
             def __init__(self):
@@ -110,6 +118,11 @@ class DirectMeshTaskTests(unittest.TestCase):
             def load(self, path, check_existing=False):
                 self.loaded.append((path, check_existing))
                 return AtlasImage()
+
+            def new(self, name, width, height, alpha=True, tiled=False):
+                if tiled:
+                    return AtlasImage()
+                return ImageCopy()
 
             def remove(self, image):
                 pass
@@ -128,7 +141,8 @@ class DirectMeshTaskTests(unittest.TestCase):
                 'Diffuse')
 
             self.assertIsNotNone(atlas)
-            self.assertIn('<UDIM>', images.loaded[0][0])
+            self.assertIn('<UDIM>', atlas.filepath)
+            self.assertTrue(atlas.reloaded)
             preview_dir = texture_dir / '.m2t_uv_previews'
             self.assertEqual(len(list(preview_dir.glob('*.1001.png'))), 1)
             self.assertEqual(len(list(preview_dir.glob('*.1002.png'))), 1)

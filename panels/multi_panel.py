@@ -25,6 +25,9 @@ Two things worth knowing:
 import bpy
 from bpy.props import EnumProperty, StringProperty
 
+from ..directories import (PERSISTENT_DIRECTORY_KEYS,
+                           restorePersistentFolderPaths)
+
 from .bmdb_panel import MED_2_TOOLKIT_PT_BMDB_Import
 from .edu_panel import MED_2_TOOLKIT_PT_EDU_Import
 from .mod_data import MED2_TOOLKIT_PT_Mod_Data
@@ -167,6 +170,20 @@ class MED_2_TOOLKIT_Preferences(bpy.types.AddonPreferences):
         default = 'strip',
         update = panelLayoutChanged)
 
+    # Kept out of the preferences UI because the Paths panel is the editing
+    # surface. These values survive replacing the add-on folder during a test
+    # install, unlike text/directories.json inside that folder.
+    directory_med2: StringProperty(default='', options={'HIDDEN'})
+    directory_iwte: StringProperty(default='', options={'HIDDEN'})
+    directory_mod_data: StringProperty(default='', options={'HIDDEN'})
+    directory_models: StringProperty(default='', options={'HIDDEN'})
+    directory_settlements: StringProperty(default='', options={'HIDDEN'})
+    directory_unit_export: StringProperty(default='', options={'HIDDEN'})
+    directory_unit_cards: StringProperty(default='', options={'HIDDEN'})
+    directory_strat: StringProperty(default='', options={'HIDDEN'})
+    directory_iwte_task_template: StringProperty(default='', options={'HIDDEN'})
+    directory_eop: StringProperty(default='', options={'HIDDEN'})
+
     def draw(self, context):
         self.layout.prop(self, "panel_layout", expand=True)
 
@@ -296,7 +313,11 @@ def register():
     # the preference is only readable once its class is registered, and an addon
     # enabled at startup gets here before the preferences are loaded, so the
     # layout is applied on the first pass of the event loop instead
-    bpy.app.timers.register(lambda: applyPanelLayout() or None, first_interval=0)
+    def finishRegistration():
+        restorePersistentFolderPaths()
+        applyPanelLayout()
+        return None
+    bpy.app.timers.register(finishRegistration, first_interval=0)
 
 
 def unregister():

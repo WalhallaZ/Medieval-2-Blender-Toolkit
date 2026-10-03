@@ -6,7 +6,8 @@ from pathlib import Path
 from .bmdb_panel import sortModels
 from .settlements_panel import sortSettlements
 from ..tasks import edu_reader, bmdb_reader, settlements_reader
-from ..directories import modFolderName, readJsonCached, saveFolderPaths, saveSettings
+from ..directories import (modFolderName, persistFolderPaths, readJsonCached,
+                           saveFolderPaths, saveSettings)
 
 script_folder = Path(__file__).parent.parent
 
@@ -110,19 +111,19 @@ class MED2_TOOLKIT_OT_Properties(bpy.types.PropertyGroup):
             with open(script_folder/('text/directories.json'), 'w') as directories_output:
                 json.dump(file_paths, directories_output, indent=2)
     list_holder: StringProperty(name = "Mod list", description = "String list of mod folders", default = file_paths["directory_mod_list"])
-    directory_med2: StringProperty(name = "Medieval 2 path", description = "Directory to vanilla Medieval 2", default = file_paths["directory_med2"], subtype = "DIR_PATH")
-    directory_iwte: StringProperty(name = "IWTE path", description = "IWTE.exe location", default = file_paths["directory_iwte"], subtype = "DIR_PATH")
+    directory_med2: StringProperty(name = "Medieval 2 path", description = "Directory to vanilla Medieval 2", default = file_paths["directory_med2"], subtype = "DIR_PATH", update = persistFolderPaths)
+    directory_iwte: StringProperty(name = "IWTE path", description = "IWTE.exe location", default = file_paths["directory_iwte"], subtype = "DIR_PATH", update = persistFolderPaths)
     mods_filtered: bpy.props.EnumProperty(name = "Mods", description = "List of mods with data folders in the Medieval 2 directory", items = modList)
-    directory_mod_data: StringProperty(name = "Mod data path", description = "Directory to read mod data from", default = file_paths["directory_mod_data"], subtype = "DIR_PATH")
-    directory_models: StringProperty(name = "Unit output path", description = "Directory to save extracted unit models", default = file_paths["directory_models"], subtype = "DIR_PATH")
-    directory_settlements: StringProperty(name = "Settlement output path", description = "Directory to save extracted settlement models", default = file_paths["directory_settlements"], subtype = "DIR_PATH")
-    directory_unit_export: StringProperty(name = "Unit export output path", description = "Directory to save exported unit GLB/textures", default = file_paths["directory_unit_export"], subtype = "DIR_PATH")
+    directory_mod_data: StringProperty(name = "Mod data path", description = "Directory to read mod data from", default = file_paths["directory_mod_data"], subtype = "DIR_PATH", update = persistFolderPaths)
+    directory_models: StringProperty(name = "Unit output path", description = "Directory to save extracted unit models", default = file_paths["directory_models"], subtype = "DIR_PATH", update = persistFolderPaths)
+    directory_settlements: StringProperty(name = "Settlement output path", description = "Directory to save extracted settlement models", default = file_paths["directory_settlements"], subtype = "DIR_PATH", update = persistFolderPaths)
+    directory_unit_export: StringProperty(name = "Unit export output path", description = "Directory to save exported unit GLB/textures", default = file_paths["directory_unit_export"], subtype = "DIR_PATH", update = persistFolderPaths)
     # .get: directories.json files written by an older toolkit have no card path
-    directory_unit_cards: StringProperty(name = "Unit card output path", description = "Directory the rendered unit cards are written under, normally the mod's data\\ui folder", default = file_paths.get("directory_unit_cards", file_paths["directory_unit_export"]), subtype = "DIR_PATH")
-    directory_strat: StringProperty(name = "Strat model output path", description = "Directory the built strat models, their combined textures and the converted .cas files are written under", default = file_paths.get("directory_strat", file_paths["directory_unit_export"]), subtype = "DIR_PATH")
-    directory_iwte_task_template: StringProperty(name = "IWTE task template", description = "IWTE task template file used for GLB to .mesh conversion", default = file_paths["directory_iwte_task_template"], subtype = "FILE_PATH")
+    directory_unit_cards: StringProperty(name = "Unit card output path", description = "Directory the rendered unit cards are written under, normally the mod's data\\ui folder", default = file_paths.get("directory_unit_cards", file_paths["directory_unit_export"]), subtype = "DIR_PATH", update = persistFolderPaths)
+    directory_strat: StringProperty(name = "Strat model output path", description = "Directory the built strat models, their combined textures and the converted .cas files are written under", default = file_paths.get("directory_strat", file_paths["directory_unit_export"]), subtype = "DIR_PATH", update = persistFolderPaths)
+    directory_iwte_task_template: StringProperty(name = "IWTE task template", description = "IWTE task template file used for GLB to .mesh conversion", default = file_paths["directory_iwte_task_template"], subtype = "FILE_PATH", update = persistFolderPaths)
     # .get: directories.json files written by an older toolkit have no EOP path
-    directory_eop: StringProperty(name = "EOP unit folder", description = "Folder of M2TWEOP unit files to read alongside export_descr_unit.txt, searched recursively. Leave blank to use the mod's own eopData\\unitTypes folder", default = file_paths.get("directory_eop", ""), subtype = "DIR_PATH")
+    directory_eop: StringProperty(name = "EOP unit folder", description = "Folder of M2TWEOP unit files to read alongside export_descr_unit.txt, searched recursively. Leave blank to use the mod's own eopData\\unitTypes folder", default = file_paths.get("directory_eop", ""), subtype = "DIR_PATH", update = persistFolderPaths)
 
 
 class MED2_TOOLKIT_OT_Refresh_Mods(bpy.types.Operator):
@@ -217,4 +218,3 @@ def register():
 def unregister():
     for item in classes:
         bpy.utils.unregister_class(item)
-    

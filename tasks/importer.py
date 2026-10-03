@@ -1,7 +1,7 @@
 import bpy
 import json
 import random
-from array import array
+import hashlib
 from pathlib import Path
 from . import recurlayercollection
 from ..directories import withTrailingSep
@@ -458,8 +458,9 @@ def modelImporter(model_folder, unit_name, faction_id, model_info, model_id):
         attachment_textures = textures[2:]
     main_textures = textures[:2]
     texture_folder = model_folder+('textures/')
-    preview_diffuse, preview_normal = previewTextureAtlases(
-        texture_folder, main_textures, attachment_textures)
+    # Build a UV-editor-only UDIM preview. Materials continue to use their
+    # actual DDS images below; a preview must never be able to blank a model.
+    previewTextureAtlases(texture_folder, main_textures, attachment_textures)
     bpy.ops.object.select_all(action='DESELECT')
     obj_armature.select_set(True)
     for parent_object in bpy.context.selected_objects:
@@ -467,13 +468,11 @@ def modelImporter(model_folder, unit_name, faction_id, model_info, model_id):
             material = obj.data.materials[0]
             if any(x in material.name for x in ['__main', '__single']) and checkExistingMaterials(material, main_textures[0]) == False:
                 material.name = main_textures[0]
-                materialWorkflow(texture_folder, main_textures[0], main_textures[1], material,
-                                 preview_diffuse, preview_normal)
+                materialWorkflow(texture_folder, main_textures[0], main_textures[1], material)
             elif (attachment_textures and '__attach' in material.name
                   and checkExistingMaterials(material, attachment_textures[0]) == False):
                 material.name = attachment_textures[0]
-                materialWorkflow(texture_folder, attachment_textures[0], attachment_textures[1], material,
-                                 preview_diffuse, preview_normal)
+                materialWorkflow(texture_folder, attachment_textures[0], attachment_textures[1], material)
     bpy.ops.object.select_all(action='DESELECT')
     obj_armature.select_set(True)
     if bpy.context.scene.med2_toolkit_units.hide_toggle:
@@ -558,8 +557,19 @@ def textureImage(texture_path, texture):
     return bpy.data.images.load(str(filepath), check_existing=True)
 
 
+def savePreviewTile(source, destination):
+    """Save an image copy as a PNG without changing the source DDS datablock."""
+    copy = source.copy()
+    try:
+        copy.filepath_raw = str(destination)
+        copy.file_format = 'PNG'
+        copy.save()
+    finally:
+        bpy.data.images.remove(copy)
+
+
 def previewAtlasImage(main_image, attachment_image, label, non_color=False):
-    """A generated UDIM image for viewing game UVs as one layout.
+    """A file-backed UDIM image for viewing game UVs as one layout.
 
     Medieval II keeps attachment UVs in U 1..2 while the main texture occupies
     U 0..1. The atlas is used only by imported Blender materials: it leaves the
@@ -567,41 +577,35 @@ def previewAtlasImage(main_image, attachment_image, label, non_color=False):
     """
     if main_image is None or attachment_image is None:
         return None
-    width, height = main_image.size
     name = 'M2T UV Preview %s: %s + %s' % (label, main_image.name, attachment_image.name)
     atlas = bpy.data.images.get(name)
-    if atlas is None:
-        atlas = bpy.data.images.new(name, width, height, alpha=True, tiled=True)
-    if atlas.source != 'TILED':
-        print("Cannot reuse M2T UV preview image %s because it is not tiled." % name)
-        return None
-    if atlas.tiles.get(1002) is None:
-        atlas.tiles.new(1002, label='Attachment')
+    if atlas is not None:
+        return atlas
 
-    for tile_number, source, tile_label in ((1001, main_image, 'Main'),
-                                            (1002, attachment_image, 'Attachment')):
-        tile_index = next(index for index, tile in enumerate(atlas.tiles)
-                          if tile.number == tile_number)
-        atlas.tiles.active_index = tile_index
-        tile = atlas.tiles[tile_index]
-        tile.label = tile_label
-        # UDIMTiles.new() only adds tile metadata.  Unlike Image > Add Tile in
-        # Blender's UI it has no pixels to scale or write until it is made a
-        # generated tile explicitly.
-        tile.generated_width = source.size[0]
-        tile.generated_height = source.size[1]
-        tile.generated_type = 'BLANK'
-        tile.generated_color = (0.0, 0.0, 0.0, 0.0)
-        atlas.update()
-        pixels = array('f', [0.0]) * (source.size[0] * source.size[1] * 4)
-        try:
-            source.pixels.foreach_get(pixels)
-            atlas.pixels.foreach_set(pixels)
-        except RuntimeError as error:
-            print("Cannot build M2T UV preview %s: %s" % (name, error))
-            return None
+    try:
+        source_dir = Path(bpy.path.abspath(main_image.filepath)).parent
+        preview_dir = source_dir / '.m2t_uv_previews'
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        identity = '%s\0%s\0%s' % (main_image.filepath, attachment_image.filepath, label)
+        stem = hashlib.sha1(identity.encode('utf-8')).hexdigest()
+        main_path = preview_dir / (stem + '.1001.png')
+        attachment_path = preview_dir / (stem + '.1002.png')
+        if not main_path.exists():
+            savePreviewTile(main_image, main_path)
+        if not attachment_path.exists():
+            savePreviewTile(attachment_image, attachment_path)
+
+        # Loading real <UDIM>-named files makes Blender create usable tile buffers.
+        # Creating tiles through the RNA API only produced empty buffers in 5.2.
+        atlas = bpy.data.images.load(str(main_path), check_existing=False)
+        atlas.name = name
+        atlas.source = 'TILED'
+        atlas.filepath = str(preview_dir / (stem + '.<UDIM>.png'))
+        atlas.reload()
+    except (OSError, RuntimeError) as error:
+        print("Cannot build M2T UV preview %s: %s" % (name, error))
+        return None
     atlas.colorspace_settings.name = 'Non-Color' if non_color else main_image.colorspace_settings.name
-    atlas.update()
     return atlas
 
 

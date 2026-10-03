@@ -567,10 +567,15 @@ def savePreviewTile(source, destination):
     width, height = source.size
     copy = bpy.data.images.new('M2T UV Preview Tile', width, height, alpha=True)
     try:
+        # Changing a generated image's color space after update() clears its
+        # buffer in Blender 5.2. Set it before filling the pixels.
+        copy.colorspace_settings.name = source.colorspace_settings.name
         pixels = array('f', [0.0]) * (width * height * 4)
         source.pixels.foreach_get(pixels)
         copy.pixels.foreach_set(pixels)
-        copy.colorspace_settings.name = source.colorspace_settings.name
+        # foreach_set writes the RNA-side pixel array. Flush it into the image
+        # buffer before saving or Blender writes the generated black buffer.
+        copy.update()
         copy.filepath_raw = str(destination)
         copy.file_format = 'PNG'
         copy.save()
@@ -596,7 +601,9 @@ def previewAtlasImage(main_image, attachment_image, label, non_color=False):
         source_dir = Path(bpy.path.abspath(main_image.filepath)).parent
         preview_dir = source_dir / '.m2t_uv_previews'
         preview_dir.mkdir(parents=True, exist_ok=True)
-        identity = '%s\0%s\0%s' % (main_image.filepath, attachment_image.filepath, label)
+        # v4 forces regeneration for previews written before savePreviewTile
+        # flushed its pixel buffer; those files are valid PNGs but all black.
+        identity = 'v4\0%s\0%s\0%s' % (main_image.filepath, attachment_image.filepath, label)
         stem = hashlib.sha1(identity.encode('utf-8')).hexdigest()
         main_path = preview_dir / (stem + '.1001.png')
         attachment_path = preview_dir / (stem + '.1002.png')
@@ -613,11 +620,13 @@ def previewAtlasImage(main_image, attachment_image, label, non_color=False):
                                     alpha=True, tiled=True)
         atlas.tiles.new(1002, label='Attachment')
         atlas.filepath = str(udim_path)
+        # As with the generated tile, assigning this after reload() clears the
+        # tiled image buffer in Blender 5.2.
+        atlas.colorspace_settings.name = 'Non-Color' if non_color else main_image.colorspace_settings.name
         atlas.reload()
     except (OSError, RuntimeError) as error:
         print("Cannot build M2T UV preview %s: %s" % (name, error))
         return None
-    atlas.colorspace_settings.name = 'Non-Color' if non_color else main_image.colorspace_settings.name
     # modelImporter clears unused datablocks after import. The preview belongs
     # in the UV editor rather than a material slot, so retain it explicitly.
     atlas.use_fake_user = True

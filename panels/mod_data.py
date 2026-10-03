@@ -6,10 +6,12 @@ from pathlib import Path
 from .bmdb_panel import sortModels
 from .settlements_panel import sortSettlements
 from ..tasks import edu_reader, bmdb_reader, settlements_reader
-from ..directories import (modFolderName, persistFolderPaths, readJsonCached,
-                           saveFolderPaths, saveSettings)
+from ..directories import (DEFAULT_DIRECTORIES, ensureDataFiles, modFolderName,
+                           persistFolderPaths, readJsonCached, saveFolderPaths,
+                           saveSettings)
 
 script_folder = Path(__file__).parent.parent
+ensureDataFiles()
 
 def readMod(self, context):
     if context.scene.med2_toolkit_reader.mods_filtered != "custom":
@@ -97,19 +99,8 @@ class MED2_TOOLKIT_OT_Properties(bpy.types.PropertyGroup):
     with open(script_folder/('text/directories.json'), 'r') as directories_list:
         try:
             file_paths = json.load(directories_list)
-        except EOFError:
-            file_paths = {
-                "directory_med2": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Medieval II Total War",
-                "directory_iwte": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Medieval II Total War\\mods",
-                "directory_mod_list": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Medieval II Total War\\mods",
-                "directory_mod_data": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Medieval II Total War\\mods",
-                "directory_models": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Medieval II Total War\\mods",
-                "directory_settlements": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Medieval II Total War\\mods",
-                "directory_unit_export": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Medieval II Total War\\mods",
-                "directory_iwte_task_template": ""
-                }
-            with open(script_folder/('text/directories.json'), 'w') as directories_output:
-                json.dump(file_paths, directories_output, indent=2)
+        except (OSError, ValueError):
+            file_paths = dict(DEFAULT_DIRECTORIES)
     list_holder: StringProperty(name = "Mod list", description = "String list of mod folders", default = file_paths["directory_mod_list"])
     directory_med2: StringProperty(name = "Medieval 2 path", description = "Directory to vanilla Medieval 2", default = file_paths["directory_med2"], subtype = "DIR_PATH", update = persistFolderPaths)
     directory_iwte: StringProperty(name = "IWTE path", description = "IWTE.exe location", default = file_paths["directory_iwte"], subtype = "DIR_PATH", update = persistFolderPaths)

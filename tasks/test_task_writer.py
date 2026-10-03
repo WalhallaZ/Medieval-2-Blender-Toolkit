@@ -50,6 +50,18 @@ def load_bmdb_reader():
     return sys.modules['toolkit.tasks.bmdb_reader']
 
 
+def load_directories():
+    sys.modules['bpy'] = types.ModuleType('bpy')
+    toolkit = types.ModuleType('toolkit')
+    toolkit.__path__ = [str(ROOT)]
+    sys.modules['toolkit'] = toolkit
+    spec = importlib.util.spec_from_file_location('toolkit.directories', ROOT / 'directories.py')
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_importer(bpy):
     sys.modules['bpy'] = bpy
     toolkit = types.ModuleType('toolkit')
@@ -78,6 +90,19 @@ def load_importer(bpy):
 
 
 class DirectMeshTaskTests(unittest.TestCase):
+    def test_data_file_bootstrap_repairs_empty_directories_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directories = load_directories()
+            directories.script_folder = Path(temporary)
+
+            directories.ensureDataFiles()
+            paths_file = Path(temporary) / 'text' / 'directories.json'
+            self.assertEqual(json.loads(paths_file.read_text()), directories.DEFAULT_DIRECTORIES)
+
+            paths_file.write_text('{}')
+            directories.ensureDataFiles()
+            self.assertEqual(json.loads(paths_file.read_text()), directories.DEFAULT_DIRECTORIES)
+
     def test_preview_atlas_loads_udim_pattern(self):
         class ImageCopy:
             filepath_raw = ''
@@ -87,6 +112,9 @@ class DirectMeshTaskTests(unittest.TestCase):
 
             def save(self):
                 Path(self.filepath_raw).write_bytes(b'png')
+
+            def update(self):
+                pass
 
         class SourceImage:
             def __init__(self, path, name):

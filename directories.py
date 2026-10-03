@@ -125,13 +125,30 @@ DEFAULT_DATA_FILES = {
 
 def ensureDataFiles():
     text_folder = script_folder/'text'
-    text_folder.mkdir(exist_ok=True)
+    text_folder.mkdir(parents=True, exist_ok=True)
     for file_name, default_content in DEFAULT_DATA_FILES.items():
         file_path = text_folder/file_name
-        if file_path.exists():
+        if not file_path.exists():
+            with open(file_path, 'w') as default_output:
+                json.dump(default_content, default_output, indent=2)
             continue
-        with open(file_path, 'w') as default_output:
-            json.dump(default_content, default_output, indent=2)
+        # A test install can leave an empty or an older paths file behind.
+        # Keep the user's entries, but restore every missing default so the
+        # Properties class never fails while the add-on is loading.
+        if file_name not in {'directories.json', 'menu_settings.json'}:
+            continue
+        try:
+            with open(file_path, 'r') as data_input:
+                existing = json.load(data_input)
+        except (OSError, ValueError):
+            existing = {}
+        if not isinstance(existing, dict):
+            existing = {}
+        repaired = dict(default_content)
+        repaired.update(existing)
+        if repaired != existing:
+            with open(file_path, 'w') as data_output:
+                json.dump(repaired, data_output, indent=2)
 
 
 def _toolkitPreferences(context):
